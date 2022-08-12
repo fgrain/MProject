@@ -64,13 +64,10 @@ public class MoveController : MonoBehaviour
     private Kinestate m_Kinestate;
     private bool onGround => groundContactCount > 0;
     private bool m_DesiredMove;
-
-    //Jump State
     private bool m_DesiredJump;
 
-    private int m_StepsSinceLastJump;
+    private int m_StepsSinceLastJump, m_StepsSinceLastGrounded;
     private int m_JumpPhase;
-    //private float m_JumpAccelerationTime;
 
     [SerializeField, Range(0, 140)]
     private float maxGroundAngle = 10f, maxStairsAngle = 60f, maxClimbAngle = 90f;
@@ -122,9 +119,11 @@ public class MoveController : MonoBehaviour
     {
         m_velocity = m_body.velocity;
 
+        m_StepsSinceLastGrounded += 1;
         m_StepsSinceLastJump += 1;
-        if (onGround)
+        if (onGround || SnapToGround())
         {
+            m_StepsSinceLastGrounded = 0;
             if (m_StepsSinceLastJump > 1)
             {
                 m_JumpPhase = 0;
@@ -145,6 +144,19 @@ public class MoveController : MonoBehaviour
         m_body.velocity = m_velocity;
         groundContactCount = 0;
         m_contactNormal = Vector3.zero;
+    }
+
+    private bool SnapToGround()
+    {
+        if (m_StepsSinceLastGrounded > 1)
+        {
+            return false;
+        }
+        if (!Physics.Raycast(m_body.position, Vector3.down))
+        {
+            return false;
+        }
+        return false;
     }
 
     #region  Ù–‘º∆À„
