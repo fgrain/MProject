@@ -44,4 +44,9 @@ public class LockTarget : MonoBehaviour
         //if (Blocked(tarPos)) return null;
         return closestTarget;
     }
+
+    private void OnDrawGizmos()
+    {
+        Gizmos.DrawWireSphere(transform.position, noticeZone);
+    }
 }
