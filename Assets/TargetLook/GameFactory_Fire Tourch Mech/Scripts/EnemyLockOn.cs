@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 public class EnemyLockOn : MonoBehaviour
 {
@@ -42,7 +43,7 @@ public class EnemyLockOn : MonoBehaviour
     {
         camFollow.lockedTarget = enemyLocked;
         defMovement.lockMovement = enemyLocked;
-        if (Input.GetKeyDown(KeyCode.Mouse0))
+        if (Mouse.current.middleButton.wasPressedThisFrame)
         {
             if (currentTarget)
             {
@@ -134,7 +135,6 @@ public class EnemyLockOn : MonoBehaviour
         pos = currentTarget.position + new Vector3(0, currentYOffset, 0);
         lockOnCanvas.position = pos;
         lockOnCanvas.localScale = Vector3.one * ((cam.position - pos).magnitude * crossHair_Scale);
-
         enemyTarget_Locator.position = pos;
         Vector3 dir = currentTarget.position - transform.position;
         dir.y = 0;

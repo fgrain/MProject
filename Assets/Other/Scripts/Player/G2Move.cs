@@ -1,10 +1,12 @@
+
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(Rigidbody))]
 [RequireComponent(typeof(CapsuleCollider))]
 public class G2Move : MonoBehaviour
 {
-    #region ÊôĞÔ
+    #region å±æ€§
 
     public Rigidbody Body { get; private set; }
 
@@ -13,22 +15,26 @@ public class G2Move : MonoBehaviour
     private Transform playerInputSpace = default;
 
     [Header("InitialParameter")]
-    public float InitialMass = 1;
+    public float InitialMass = 50f;
 
-    public float InitialMovementForce = 10;
-    public Vector3 Gravity = new Vector3(0, -9.8f, 0);
+    public float InitialMovementForce = 400f;
+    public Vector3 Gravity = new Vector3(0, -40f, 0);
     public float AnimationSmooth = 0.2f;
-    public LayerMask GroundLayer = 1 << 0;
-    [SerializeField, Range(0, 140)] private float maxGroundAngle = 60f;
+    public LayerMask GroundLayer = 1 << 0 | 1 << 19;
+    [SerializeField, Range(0, 140)] private float maxGroundAngle = 40f;
+    public float FrictionTest = 1;
 
     [Header("Movement")]
     public float GroundDistance = 1.5f;
 
     public float StepHeight = 0.4f;
-    public float StepSmooth = 5f;
-    [Range(0f, 1f)] public float AirAccelerationCoefficient = 0.5f;
-    [Range(1f, 3f)] public float SprintCoefficient = 2;
+    public float StepSmooth = 20f;
+    [Range(0f, 1f)] public float AirAccelerationCoefficient = 1f;
+    [Range(1f, 3f)] public float SprintCoefficient = 1.5f;
     [Range(0f, 1f)] public float WalkCoefficient = 0.5f;
+    public float SprintTime = 0.1f;
+    public float SprintDistance = 5f;
+
     private float groundMinDistance = 0.4f;
     private float groundMaxDistance = 1.5f;
     private float groundDistance;
@@ -36,14 +42,15 @@ public class G2Move : MonoBehaviour
     [Header("Jump and Falling")]
     public int MaxAirJump = 1;
 
-    public float JumpTime = 0.5f;
-    [Range(0f, 3f)] public float JumpVelocityCoefficient = 0.5f;
-    [Range(0f, 2f)] public float AirJumpVelocityCoefficient = 1;
+    public int MaxAirSprint = 1;
+    public float JumpTime = 0.2f;
+    [Range(0f, 3f)] public float JumpVelocityCoefficient = 1.4f;
+    [Range(0f, 2f)] public float AirJumpVelocityCoefficient = 1.6f;
     [Range(0f, 1f)] public float FallOffsetCoefficient = 0.5f;
-    [Range(0f, 5f)] public float WallJumpCoefficient = 2;
+    [Range(0f, 5f)] public float WallJumpCoefficient = 2f;
 
     [Header("Rotation")]
-    public float RotateSpeed = 360;
+    public float RotateSpeed = 180;
 
     public float AirRotateSpeed = 720;
 
@@ -57,10 +64,11 @@ public class G2Move : MonoBehaviour
     private float m_Walk;
     private float m_Friction;
     private int m_JumpPhase;
+    private int m_AirSprintPhase;
     private Vector3 m_PreInput;
     private Vector3 m_InputMovement;
     private Vector3 m_Velocity, m_DesiredVelocity;
-    private Vector3 m_ContactNormal, m_SteepNormal, m_ClimbNormal;
+    private Vector3 m_ContactNormal, m_SteepNormal;
 
     private bool m_OnGround => m_GroundContactCount > 0;
     private bool m_OnSteep => m_SteepContactCount > 0;
@@ -68,19 +76,23 @@ public class G2Move : MonoBehaviour
     private bool m_OnSnapGround;
     private bool m_OnAir;
     private bool m_OnWalk;
+    private bool m_OnSprint;
     private bool m_DesiredMove, m_StopMove;
     private bool m_DesiredJump, m_JumpPerform;
-
-    private float m_JumpPerformTime = 0;
+    private bool m_OnExternalForce;
+    private float m_SprintTimer = 0;
+    private float m_SprintVelocity = 0;
+    private Vector3 m_SprintDirection;
+    private float m_JumpPerformTimer = 0;
     private int m_StepsSinceLastJump, m_StepsSinceLastGrounded;
     private RaycastHit groundHit;
 
     private int m_GroundContactCount, m_SteepContactCount;
     private float minGroundDotProduct;
 
-    #endregion ÊôĞÔ
+    #endregion å±æ€§
 
-    #region ¸üĞÂ
+    #region æ›´æ–°
 
     private void OnValidate()
     {
@@ -118,7 +130,15 @@ public class G2Move : MonoBehaviour
         {
             m_DesiredVelocity = m_InputMovement * m_MaxVelocity * m_Sprint;
         }
-        UpdateAnimator();
+
+        if (Keyboard.current.pKey.wasPressedThisFrame)
+        {
+            TestMoveFoeced();
+        }
+        if (Keyboard.current.oKey.isPressed)
+        {
+            TestMoveFoeced(1.5f);
+        }
     }
 
     private void FixedUpdate()
@@ -133,7 +153,6 @@ public class G2Move : MonoBehaviour
 
     private void UpdateState()
     {
-        StepClimb();
         m_Velocity = Body.velocity;
         m_StepsSinceLastGrounded += 1;
         m_StepsSinceLastJump += 1;
@@ -144,6 +163,7 @@ public class G2Move : MonoBehaviour
             if (m_OnGround && m_StepsSinceLastJump > 1)
             {
                 m_JumpPhase = 0;
+                m_AirSprintPhase = 0;
             }
             if (m_GroundContactCount > 1)
             {
@@ -163,7 +183,7 @@ public class G2Move : MonoBehaviour
     {
         Body.velocity = m_Velocity;
         m_GroundContactCount = m_SteepContactCount = 0;
-        m_ContactNormal = m_SteepNormal = m_ClimbNormal = Vector3.zero;
+        m_ContactNormal = m_SteepNormal = Vector3.zero;
     }
 
     private void PlayerMovement()
@@ -180,7 +200,7 @@ public class G2Move : MonoBehaviour
 
     public void HorizontalMove()
     {
-        if (m_DesiredMove)
+        if (m_DesiredMove && !m_OnSprint)
         {
             if (m_StopMove)
             {
@@ -192,6 +212,7 @@ public class G2Move : MonoBehaviour
             }
             else
             {
+                StepClimb();
                 AdjustVelocity();
             }
         }
@@ -199,9 +220,56 @@ public class G2Move : MonoBehaviour
         {
             if (m_OnGround)
             {
-                m_Velocity = Vector3.zero;
+                StopWithFriction();
+            }
+            if (m_OnSprint)
+            {
+                OnSrpintMove();
             }
         }
+    }
+
+    public void OnSrpintMove()
+    {
+        if (m_AirSprintPhase <= MaxAirSprint && m_SprintTimer < SprintTime)
+        {
+            m_SprintTimer += Time.fixedDeltaTime;
+            m_Velocity = m_SprintVelocity * m_SprintDirection;
+        }
+        else
+        {
+            m_SprintTimer = 0f;
+            m_OnSprint = false;
+            if (m_InputMovement == Vector3.zero)
+                m_Velocity = Vector3.zero;
+        }
+    }
+
+    public void StopWithFriction()
+    {
+        if (m_OnExternalForce)
+        {
+            m_Velocity -= m_MoveAcceleration * Time.fixedDeltaTime * m_Velocity.normalized;
+            if (m_Velocity.magnitude <= 0)
+                m_OnExternalForce = false;
+        }
+        else if (!m_OnSprint)
+            m_Velocity = Vector3.zero;
+    }
+
+    public void TestMoveFoeced()
+    {
+        m_OnExternalForce = true;
+        Vector3 velocity = Vector3.forward * InitialMovementForce / m_Mass;
+        Body.velocity += velocity;
+    }
+
+    public void TestMoveFoeced(float v)
+    {
+        m_OnExternalForce = true;
+        Vector3 velocity = Vector3.forward * InitialMovementForce / m_Mass;
+        if (Body.velocity.magnitude < velocity.magnitude * v)
+            Body.velocity += velocity;
     }
 
     public void Jump()
@@ -211,9 +279,9 @@ public class G2Move : MonoBehaviour
             m_DesiredJump = false;
             JumpStart();
         }
-        if (m_JumpPerform && m_JumpPerformTime < JumpTime && m_JumpPhase <= MaxAirJump)
+        if (m_JumpPerform && m_JumpPerformTimer < JumpTime && m_JumpPhase <= MaxAirJump)
         {
-            m_JumpPerformTime += Time.fixedDeltaTime;
+            m_JumpPerformTimer += Time.fixedDeltaTime;
             m_Velocity.y = m_MaxVelocity * JumpVelocityCoefficient;
         }
     }
@@ -261,6 +329,8 @@ public class G2Move : MonoBehaviour
 
     private void ProcessRotation()
     {
+        if (m_OnSprint)
+            return;
         Quaternion r = Body.rotation;
         float rotateSpeed;
         if (m_OnAir)
@@ -278,13 +348,6 @@ public class G2Move : MonoBehaviour
             r = Quaternion.RotateTowards(r, destRotate, rotateSpeed * Time.deltaTime);
             Body.MoveRotation(r);
         }
-        //else if (PatternAttacker && playerInputSpace && PatternAttacker.IsAttacking)
-        //{
-        //    float rotationY = playerInputSpace.rotation.eulerAngles.y;
-        //    Quaternion destRotate = Quaternion.Euler(0, rotationY, 0);
-        //    r = Quaternion.RotateTowards(r, destRotate, RotateSpeed * m_Velocity.magnitude * Time.deltaTime);
-        //    Body.MoveRotation(r);
-        //}
     }
 
     private void JumpStart()
@@ -297,7 +360,7 @@ public class G2Move : MonoBehaviour
         }
         else if (m_OnSteep && m_JumpPhase <= MaxAirJump)
         {
-            jumpDirection = m_ClimbNormal.normalized + Vector3.up * WallJumpCoefficient;
+            jumpDirection = m_SteepNormal.normalized + Vector3.up * WallJumpCoefficient;
             jumpDirection.Normalize();
             m_Velocity.y = 0;
         }
@@ -321,7 +384,6 @@ public class G2Move : MonoBehaviour
             m_Velocity.y = 0;
             airJumpVelocity = AirJumpVelocityCoefficient;
         }
-        //m_AnimationInput.SetPlayerJump(m_OnGround);
         m_StepsSinceLastJump = 0;
         m_JumpPhase += 1;
         float jumpSpeed = m_MaxVelocity * JumpVelocityCoefficient * airJumpVelocity;
@@ -357,19 +419,13 @@ public class G2Move : MonoBehaviour
         return true;
     }
 
-    public void UpdateAnimator()
-    {
-        float speed = transform.InverseTransformDirection(m_DesiredVelocity).magnitude;
-        //m_AnimationInput.SetJumpState(m_OnJumpDown, m_OnGround || m_OnSnapGround);
-        //m_AnimationInput.SetPlayerLocomotion(speed, AnimationSmooth);
-    }
 
-    #endregion ¸üĞÂ
+    #endregion æ›´æ–°
 
-    #region ÊôĞÔ¼ÆËã
+    #region å±æ€§è®¡ç®—
 
     /// <summary>
-    /// ĞŞ¸ÄÒÆ¶¯Ê©¼ÓµÄÁ¦
+    /// ä¿®æ”¹ç§»åŠ¨æ–½åŠ çš„åŠ›
     /// </summary>
     /// <param name="force"></param>
     public void ModifyMovementForce(float force)
@@ -379,7 +435,7 @@ public class G2Move : MonoBehaviour
     }
 
     /// <summary>
-    /// ÖØÖÃÒÆ¶¯Ê©¼ÓµÄÁ¦
+    /// é‡ç½®ç§»åŠ¨æ–½åŠ çš„åŠ›
     /// </summary>
     public void ResetMovementForce()
     {
@@ -388,7 +444,7 @@ public class G2Move : MonoBehaviour
     }
 
     /// <summary>
-    /// ĞŞ¸Ä½ÇÉ«ÖÊÁ¿
+    /// ä¿®æ”¹è§’è‰²è´¨é‡
     /// </summary>
     /// <param name="mass"></param>
     public void ModifyMass(float mass)
@@ -398,7 +454,7 @@ public class G2Move : MonoBehaviour
     }
 
     /// <summary>
-    /// ÖØÖÃ½ÇÉ«ÖÊÁ¿
+    /// é‡ç½®è§’è‰²è´¨é‡
     /// </summary>
     public void ResetMass()
     {
@@ -407,7 +463,7 @@ public class G2Move : MonoBehaviour
     }
 
     /// <summary>
-    /// ÖØÖÃÁ¦ºÍÖÊÁ¿
+    /// é‡ç½®åŠ›å’Œè´¨é‡
     /// </summary>
     public void ResetForceAndMass()
     {
@@ -417,7 +473,7 @@ public class G2Move : MonoBehaviour
     }
 
     /// <summary>
-    /// ÉèÖÃ¼ÓËÙ¶È
+    /// è®¾ç½®åŠ é€Ÿåº¦
     /// </summary>
     private void SetAcceleration()
     {
@@ -432,9 +488,9 @@ public class G2Move : MonoBehaviour
         m_AirAcceleration = AirAccelerationCoefficient * m_Acceleration;
     }
 
-    #endregion ÊôĞÔ¼ÆËã
+    #endregion å±æ€§è®¡ç®—
 
-    #region ×´Ì¬¼ì²â
+    #region çŠ¶æ€æ£€æµ‹
 
     private void OnCollisionEnter(Collision collision)
     {
@@ -452,9 +508,13 @@ public class G2Move : MonoBehaviour
         {
             Vector3 normal = collision.GetContact(i).normal;
             CheckContact(normal);
-            m_Friction = 1;
-            m_MoveAcceleration = m_Acceleration * m_Friction;
         }
+    }
+
+    private void SetFriction()
+    {
+        m_Friction = FrictionTest;
+        m_MoveAcceleration = m_Acceleration * m_Friction;
     }
 
     private void CheckContact(Vector3 normal)
@@ -470,6 +530,7 @@ public class G2Move : MonoBehaviour
             m_SteepNormal += normal;
             m_SteepContactCount += 1;
         }
+        SetFriction();
     }
 
     protected virtual void CheckGroundDistance()
@@ -482,16 +543,16 @@ public class G2Move : MonoBehaviour
             // ray for RayCast
             Ray ray2 = new Ray(transform.position + new Vector3(0, m_Collider.height / 2, 0), Vector3.down);
             // raycast for check the ground distance
-            if (Physics.Raycast(ray2, out groundHit, (m_Collider.height / 2) + dist, GroundLayer) && !groundHit.collider.isTrigger)
+            if (Physics.Raycast(ray2, out groundHit, (m_Collider.height / 2) + dist, GroundLayer, QueryTriggerInteraction.Ignore))
                 dist = transform.position.y - groundHit.point.y;
             // sphere cast around the base of the capsule to check the ground distance
             if (dist >= groundMinDistance)
             {
                 Vector3 pos = transform.position + Vector3.up * (m_Collider.radius);
                 Ray ray = new Ray(pos, -Vector3.up);
-                if (Physics.SphereCast(ray, radius, out groundHit, m_Collider.radius + groundMaxDistance, GroundLayer) && !groundHit.collider.isTrigger)
+                if (Physics.SphereCast(ray, radius, out groundHit, m_Collider.radius + groundMaxDistance, GroundLayer, QueryTriggerInteraction.Ignore))
                 {
-                    Physics.Linecast(groundHit.point + (Vector3.up * 0.1f), groundHit.point + Vector3.down * 0.15f, out groundHit, GroundLayer);
+                    Physics.Linecast(groundHit.point + (Vector3.up * 0.1f), groundHit.point + Vector3.down * 0.15f, out groundHit, GroundLayer, QueryTriggerInteraction.Ignore);
                     float newDist = transform.position.y - groundHit.point.y;
                     if (dist > newDist) dist = newDist;
                 }
@@ -506,7 +567,7 @@ public class G2Move : MonoBehaviour
         {
             return false;
         }
-        if (!Physics.Raycast(Body.position, Vector3.down, out RaycastHit hit, GroundDistance, GroundLayer))
+        if (!Physics.Raycast(Body.position + Vector3.up * (m_Collider.height * 0.5f), Vector3.down, out RaycastHit hit, GroundDistance, GroundLayer, QueryTriggerInteraction.Ignore))
         {
             return false;
         }
@@ -518,7 +579,6 @@ public class G2Move : MonoBehaviour
 
         var normal = hit.normal;
         CheckContact(normal);
-
         float speed = m_Velocity.magnitude;
         float dot = Vector3.Dot(m_Velocity, hit.normal);
         if (dot > 0f)
@@ -531,40 +591,43 @@ public class G2Move : MonoBehaviour
 
     private void StepClimb()
     {
+        Vector3 normal = m_OnGround || m_OnSnapGround ? m_ContactNormal : m_SteepNormal;
+        if (Vector3.Dot(normal, Vector3.up) < 0.9) return;
+
         RaycastHit hitLower;
-        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(Vector3.forward), out hitLower, m_Collider.radius + 0.1f))
+        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(Vector3.forward), out hitLower, m_Collider.radius + 0.1f, GroundLayer, QueryTriggerInteraction.Ignore))
         {
             RaycastHit hitUpper;
-            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(Vector3.forward), out hitUpper, m_Collider.radius + 0.2f))
+            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(Vector3.forward), out hitUpper, m_Collider.radius + 0.2f, GroundLayer, QueryTriggerInteraction.Ignore))
             {
                 Body.position -= new Vector3(0f, -StepSmooth * Time.fixedDeltaTime, 0f);
             }
         }
 
         RaycastHit hitLower45;
-        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(1.5f, 0, 1), out hitLower45, m_Collider.radius + 0.1f))
+        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(1.5f, 0, 1), out hitLower45, m_Collider.radius + 0.1f, GroundLayer, QueryTriggerInteraction.Ignore))
         {
             RaycastHit hitUpper45;
-            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(1.5f, 0, 1), out hitUpper45, m_Collider.radius + 0.2f))
+            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(1.5f, 0, 1), out hitUpper45, m_Collider.radius + 0.2f, GroundLayer, QueryTriggerInteraction.Ignore))
             {
                 Body.position -= new Vector3(0f, -StepSmooth * Time.fixedDeltaTime, 0f);
             }
         }
 
         RaycastHit hitLowerMinus45;
-        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(-1.5f, 0, 1), out hitLowerMinus45, m_Collider.radius + 0.1f))
+        if (Physics.Raycast(Body.position + Vector3.up * 0.1f, transform.TransformDirection(-1.5f, 0, 1), out hitLowerMinus45, m_Collider.radius + 0.1f, GroundLayer, QueryTriggerInteraction.Ignore))
         {
             RaycastHit hitUpperMinus45;
-            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(-1.5f, 0, 1), out hitUpperMinus45, m_Collider.radius + 0.2f))
+            if (hitLower.normal.y < 0.1 && !Physics.Raycast(Body.position + Vector3.up * StepHeight, transform.TransformDirection(-1.5f, 0, 1), out hitUpperMinus45, m_Collider.radius + 0.2f, GroundLayer, QueryTriggerInteraction.Ignore))
             {
                 Body.position -= new Vector3(0f, -StepSmooth * Time.fixedDeltaTime, 0f);
             }
         }
     }
 
-    #endregion ×´Ì¬¼ì²â
+    #endregion çŠ¶æ€æ£€æµ‹
 
-    #region µ÷ÓÃ½Ó¿Ú
+    #region è°ƒç”¨æ¥å£
 
     public void DesiredMove(Vector3 inputMovement)
     {
@@ -588,7 +651,7 @@ public class G2Move : MonoBehaviour
     public void JumpPerform()
     {
         m_JumpPerform = true;
-        m_JumpPerformTime = 0;
+        m_JumpPerformTimer = 0;
     }
 
     public void JumpInputStop()
@@ -596,19 +659,18 @@ public class G2Move : MonoBehaviour
         m_JumpPerform = false;
     }
 
-    public void ProcessAttack()
-    {
-        if (!m_JumpPerform)
-        {
-            //PatternAttacker?.TryAttack(Self.CurController);
-        }
-    }
-
     public void Sprint()
     {
         m_Sprint = m_OnGround || m_OnSnapGround ? SprintCoefficient : 1;
         m_OnWalk = false;
         m_Walk = 1;
+        if (!m_OnSprint)
+            m_OnSprint = true;
+        if (m_OnAir)
+            m_AirSprintPhase += 1;
+
+        m_SprintVelocity = SprintDistance / SprintTime;
+        m_SprintDirection = m_InputMovement == Vector3.zero ? Body.transform.forward : m_DesiredVelocity.normalized;
     }
 
     public void SprintStop()
@@ -629,5 +691,5 @@ public class G2Move : MonoBehaviour
         }
     }
 
-    #endregion µ÷ÓÃ½Ó¿Ú
+    #endregion è°ƒç”¨æ¥å£
 }

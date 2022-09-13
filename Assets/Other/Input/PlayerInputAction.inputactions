@@ -318,7 +318,7 @@
                 },
                 {
                     "name": "Click",
-                    "type": "PassThrough",
+                    "type": "Button",
                     "id": "5c3912b3-58bd-4e48-836a-d69877d2128f",
                     "expectedControlType": "Button",
                     "processors": "",
